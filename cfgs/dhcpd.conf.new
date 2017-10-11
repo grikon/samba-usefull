@@ -1,0 +1,41 @@
+authoritative;
+ddns-update-style none;
+
+subnet 192.168.0.0 netmask 255.255.255.0 {
+  option subnet-mask 255.255.255.0;
+  option broadcast-address 192.168.0.255;
+  option time-offset 0;
+  option routers 192.168.0.1;
+  option domain-name "samdom.example.com";
+  option domain-name-servers 192.168.0.6, 192.168.0.5;
+  option netbios-name-servers 192.168.0.5, 192.168.0.6;
+  option ntp-servers 192.168.0.5, 192.168.0.6;
+  pool {
+    max-lease-time 1800; # 30 minutes
+    range 192.168.0.50 192.168.0.229;
+  }
+}
+
+on commit {
+set noname = concat("dhcp-", binary-to-ascii(10, 8, "-", leased-address));
+set ClientIP = binary-to-ascii(10, 8, ".", leased-address);
+set ClientDHCID = binary-to-ascii(16, 8, ":", hardware);
+set ClientName = pick-first-value(option host-name, config-option-host-name, client-name, noname);
+log(concat("Commit: IP: ", ClientIP, " DHCID: ", ClientDHCID, " Name: ", ClientName));
+execute("/etc/dhcp/bin/dhcp-dyndns.sh", "add", ClientIP, ClientDHCID, ClientName);
+}
+
+on release {
+set ClientIP = binary-to-ascii(10, 8, ".", leased-address);
+set ClientDHCID = binary-to-ascii(16, 8, ":", hardware);
+log(concat("Release: IP: ", ClientIP));
+execute("/etc/dhcp/bin/dhcp-dyndns.sh", "delete", ClientIP, ClientDHCID);
+}
+
+on expiry {
+set ClientIP = binary-to-ascii(10, 8, ".", leased-address);
+# cannot get a ClientMac here, apparently this only works when actually receiving a packet
+log(concat("Expired: IP: ", ClientIP));
+# cannot get a ClientName here, for some reason that always fails
+execute("/etc/dhcp/bin/dhcp-dyndns.sh", "delete", ClientIP, "", "0");
+}
