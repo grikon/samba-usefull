@@ -42,6 +42,8 @@ http://wiki.opennet.ru/Dhcp_%D0%B8_ad/samba4  //Вариант настройк�
 https://wiki.samba.org/index.php/Setting_up_a_BIND_DNS_Server
 https://wiki.samba.org/index.php/Managing_the_Samba_AD_DC_Service_Using_Systemd
 https://wiki.samba.org/index.php/Joining_a_Samba_DC_to_an_Existing_Active_Directory //Про настройку smb.conf
+
+https://github.com/myrjola/docker-samba-ad-dc/blob/master/init.sh //Настройка krb5 ktutil kerberos
 http://blog.admindiary.com/  //Настройка окна авторизации при входе в ОС and настройка smb.conf with krb5 !!!!!
 
 http://smb-conf.ru/1-smbconf-po-sekciyam.html
