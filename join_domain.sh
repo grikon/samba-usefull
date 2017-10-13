@@ -48,6 +48,7 @@ yum -y install adcli authconfig realmd sssd oddjob oddjob-mkhomedir samba-common
 echo "Ввод компьютера в домен $DOMAIN..."
 #adcli -v join $DOMAIN
 realm -v join $DOMAIN -U ${Administrator}@${REALM}
+realm --verbose join tver.trs --user-principal=machine01/Administrator@TVER.TRS
 
 
 echo "Setting up kerberos client tools..."

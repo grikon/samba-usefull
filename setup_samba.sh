@@ -317,8 +317,8 @@ systemctl enable ntpd
 systemctl start ntpd
 
 #echo "Создание обратной	зоны DNS..."
-#samba-­tool dns zonecreate $HOSTNAME 1.168.192.in­addr.arpa
-#samba­-tool dns add 1.168.192.in­addr.arpa 2 PTR $HOSTNAME
+#samba-­tool dns zonecreate $HOSTNAME 1.168.192.in­-addr.arpa
+#samba­-tool dns add 1.168.192.in­-addr.arpa 2 PTR $HOSTNAME
 
 echo "Создание тестовых пользователей user1 и user2..."
 samba-tool user create user1 Passw0rd --must-change-at-next-login --surname=Sidorov --given-name=sidorov --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
