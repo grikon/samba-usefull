@@ -5,8 +5,7 @@ dir_config="$dir_script/cfgs"
 #dir_libs="$dir_script/libs"
 #dir_data_repos="$dir_script/data_repos"
 
-#install all pre-reqs
-echo "Установка необходимых пакетов для ОС"
+echo "Установка необходимого ПО"
 yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
    readline-devel python-devel gdb pkgconfig krb5-workstation \
    zlib-devel setroubleshoot-server libaio-devel \
@@ -23,34 +22,34 @@ yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
 
 # configure
 echo "Настройка операционной системы "ОСь"... "
-
 . ./functions.sh
 . ./env_vars.sh
 
 systemctl stop NetworkManager
 
+echo "Настройка часового пояса"
+
 
 echo "Временные настройки DNS..."
-
 cat <<EOF > /etc/resolv.conf
 nameserver 8.8.8.8
 EOF
 
-echo "Установка точного времени"config.php
-
+echo "Установка точного времени"
 yum install -y ntpdate ntp
+mv /etc/localtime /etc/localtime.bak
+ln ­-s /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 enableService ntpd
 startService  ntpd
 
 DATETIME=`date +%Y%m%d_%H%M%S`
 
 echo "Инициализация и настройка домена $DOMAIN..."
-
 #for service in smb nmb slapd named; do chkconfig $service off; service $service stop;
 rm -rf /etc/samba/smb.conf
 rm -rf /var/lib/samba/private/*
 rm -rf /etc/krb5.conf
-samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes
+samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN ­--host­-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes ­--use­-ntvfs
 rndc-confgen -a -r /dev/urandom
 
 cat <<EOF > /var/named/forwarders.conf
@@ -75,11 +74,13 @@ options {
         dump-file       "/var/named/data/cache_dump.db";
         statistics-file "/var/named/data/named_stats.txt";
         memstatistics-file "/var/named/data/named_mem_stats.txt";
-        allow-query     { localnets; };
+        allow-query     { localnets; $SUBNET/$PREFIX };
+	allow-update     { localnets; $SUBNET/$PREFIX };
         recursion yes;
 
         dnssec-enable no;
         dnssec-validation no;
+	auth-nxdomain	yes;
 //        dnssec-enable yes;
 //        dnssec-validation yes;
 //        dnssec-lookaside auto;
@@ -90,6 +91,7 @@ options {
         managed-keys-directory "/var/named/dynamic";
 
         tkey-gssapi-keytab "/var/lib/samba/private/dns.keytab";
+	tkey­-domain "$DOMAIN"
 
         include "forwarders.conf";
 
@@ -112,6 +114,13 @@ include "/etc/named.root.key";
 include "/var/lib/samba/private/named.conf";
 include "/etc/rndc.key";
 
+EOF
+
+echo "Настройка DNS на домен контроллере /etc/resolv.conf"
+cat <<EOF > /etc/resolv.conf
+domain $DOMAIN
+search $DOMAIN
+nameserver $DNS1
 EOF
 
 #mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
@@ -159,7 +168,7 @@ do
 done
 restorecon -vR /var/lib/samba/
 
-echo "Настройка межсетевого экрана Firewalld..."
+echo "Настройка правил межсетевого экрана Firewalld..."
 firewall-cmd --add-port=53/tcp --permanent;
 firewall-cmd --add-port=53/udp --permanent;
 firewall-cmd --add-port=88/tcp --permanent;
@@ -181,12 +190,6 @@ firewall-cmd --reload
 echo "Запуск службы DNS..."
 enableService named
 startService named
-
-# Switching to internal DNS...
-cat <<EOF > /etc/resolv.conf
-nameserver $DNS1
-search $DOMAIN
-EOF
 
 cat <<EOF > /etc/init.d/samba4
 #!/bin/bash
@@ -275,6 +278,8 @@ EOF
 chmod 555 /etc/init.d/samba4
 
 echo "Запуск службы SAMBA Active Directory Domain Controller..."
+mv /etc/samba/smb.conf /etc/named.conf.$DATETIME
+cp -f $dir_config/smb.conf /etc/samba/
 enableService samba4
 startService samba4
 
@@ -298,7 +303,6 @@ samba-tool group addmembers DnsAdmins dhcpd
 samba-tool group addmembers DnsUpdateProxy dhcpd
 samba-tool domain exportkeytab --principal=dhcpd@$REALM /etc/dhcp/dhcpd.keytab
 chown dhcpd.dhcpd /etc/dhcp/dhcpd.keytab
-systemctl enable dhcpd
 
 cp -f $dir_config/dhcpd.conf /etc/dhcp/
 
@@ -311,20 +315,23 @@ cp -f $dir_config/ntp.conf /etc/
 chown dhcpd.dhcpd /usr/local/bin/*.sh
 chmod +x /usr/local/bin/dhcpd-update.sh
 chown -R dhcpd.dhcpd /etc/dhcp
-systemctl start dhcpd
 
+systemctl enable dhcpd
+systemctl start dhcpd
 systemctl enable ntpd
 systemctl start ntpd
 
-#echo "Создание обратной	зоны DNS..."
-#samba-­tool dns zonecreate $HOSTNAME 1.168.192.in­-addr.arpa
-#samba­-tool dns add 1.168.192.in­-addr.arpa 2 PTR $HOSTNAME
+echo "Создание обратной зоны DNS..."
+echo "$ADMINPASSWORD | kinit Administrator
+samba-­tool dns zonecreate $HOSTNAME 1.168.192.in­-addr.arpa
+samba­-tool dns add 1.168.192.in­-addr.arpa 2 PTR $HOSTNAME
+samba_dnsupdate --verbose --all-names
 
 echo "Создание тестовых пользователей user1 и user2..."
 samba-tool user create user1 Passw0rd --must-change-at-next-login --surname=Sidorov --given-name=sidorov --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
 samba-tool user create user2 Passw0rd --must-change-at-next-login --surname=Petrov --given-name=petrov  --mail-address='user2@tver.trs' --uid=user2 --uid-number=10001 --gid-number=10000 --login-shell=/bin/bash
 
-echo "Конфигурирование утилиты администрирования контроллера домена SAMBA AD DC"
+echo "Конфигурирование утилиты администрирования контроллера домена - phpLdapAdmin"
 yum -y install phpldapadmin
 cp -f $dir_config/phpldapadmin/config.php /etc/phpldapadmin/
 cp -f $dir_config/phpldapadmin/phpldapadmin.conf /etc/httpd/conf.d/
@@ -339,4 +346,4 @@ samba-tool fsmo show
 #host -t SRV _kerberos._udp.$DOMAIN.
 #host -t SRV _ldap._tcp.$DOMAIN.
 #host -t A $HOSTNAME.
-#samba_dnsupdate --verbose --all-names
+

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# /etc/bin/dhcp-dyndns.sh
+# /etc/bin/dhcpd-update.sh
 
 # This script is for secure DDNS updates on Samba 4
 # Version: 0.8.8
@@ -22,14 +22,14 @@ REALM=$(echo ${domain^^})
 #NSUPDFLAGS="-d"
 
 # krbcc ticket cache
-export KRB5CCNAME="/tmp/dhcp-dyndns.cc"
+export KRB5CCNAME="/tmp/dhcpd-update.cc"
 
 # Kerberos principal
 SETPRINCIPAL="dhcpd@${REALM}"
 # Kerberos keytab
 # /etc/dhcpd.keytab
 # krbcc ticket cache
-# /tmp/dhcp-dyndns.cc
+# /tmp/dhcpd-update.cc
 
 TESTUSER=$(wbinfo -u | grep dhcpd)
 if [ -z "${TESTUSER}" ]; then
@@ -78,7 +78,7 @@ test=$(date +%d'-'%m'-'%y' '%H':'%M':'%S)
 klist -c /tmp/dhcp-dyndns.cc -s
 if [ "$?" != "0" ]; then
     logger "${test} [dyndns] : Getting new ticket, old one has expired"
-    kinit -F -k -t /etc/dhcp/dhcpd.keytab -c /tmp/dhcp-dyndns.cc "${SETPRINCIPAL}"
+    kinit -F -k -t /etc/dhcp/dhcpd.keytab -c /tmp/dhcpd-update.cc "${SETPRINCIPAL}"
     if [ "$?" != "0" ]; then
         logger "${test} [dyndns] : dhcpd kinit for dynamic DNS failed"
         exit 1;
