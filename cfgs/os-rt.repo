@@ -1,0 +1,8 @@
+[os-rt-base]
+name=Operating system OS-RT 2.0 - Base
+#baseurl=http://pkgs.os-rt.ru/os-rt/$releasever/os/$basearch/
+baseurl=http://192.168.1.2/repos
+metadata_expire=14d
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-NCI
+skip_if_unavailable=True
+

@@ -1,6 +1,13 @@
 # Samba4-ActiveDirectory
 Scripts and code for Active Directory integration
 
+At FIRST, get all pkgs os-rt:
+
+cd /var/www/html/
+reposync http://betapkgs.os-rt.ru/os-rt/2.1/os/x86_64/
+chmod -R 755 /var/www/html/os-rt-base
+createrepo os-rt-base/
+
 Scripts and their purpose
 =========================
 env_vars.sh

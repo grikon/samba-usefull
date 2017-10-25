@@ -1,9 +1,47 @@
 #!/bin/bash
 
-dir_script=`dirname $0`
-dir_config="$dir_script/cfgs"
-#dir_libs="$dir_script/libs"
-#dir_data_repos="$dir_script/data_repos"
+# configure
+echo "Настройка операционной системы "ОСь"... "
+. ./functions.sh
+. ./env_vars.sh
+
+echo "$IP $(hostname)" >> /etc/hosts && \
+
+echo "Конфигурирование репозитория os-rt-base"
+chmod -R 755 /var/www/html/os-rt-base
+
+cat <<EOF > /etc/httpd/conf.d/repos.conf
+Alias /repos /var/www/html/os-rt-base/
+<directory /var/www/html/os-rt-base>
+Options +Indexes
+Require all granted
+</directory>
+EOF
+
+systemctl enable httpd
+systemctl start httpd
+
+cat <<EOF > /etc/yum.repos.d/os-rt.repo
+[os-rt-base]
+name=Operating system OS-RT 2.0 - Base
+#baseurl=http://betapkgs.os-rt.ru/os-rt/$releasever/os/$basearch/
+baseurl=http://$IP/repos
+metadata_expire=14d
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-NCI
+skip_if_unavailable=True
+EOF
+
+restorecon -vR /var/www/html
+yum clean all
+yum repolist
+
+echo "Настройка DNS /etc/resolv.conf"
+cat <<EOF > /etc/resolv.conf
+domain $DOMAIN
+search $DOMAIN
+nameserver $DNS1
+nameserver 8.8.8.8
+EOF
 
 echo "Установка необходимого ПО"
 yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
@@ -20,36 +58,25 @@ yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
    samba-test tdb-tools krb5-workstation samba-winbind-clients \
    openldap-clients bind bind-utils python-dns nmap-ncat dhcp
 
-# configure
-echo "Настройка операционной системы "ОСь"... "
-. ./functions.sh
-. ./env_vars.sh
-
-systemctl stop NetworkManager
-
-echo "Настройка часового пояса"
-
-
-echo "Временные настройки DNS..."
-cat <<EOF > /etc/resolv.conf
-nameserver 8.8.8.8
-EOF
-
-echo "Установка точного времени"
+echo "Установка точного времени, настройка локального NTP-сервера"
 yum install -y ntpdate ntp
 mv /etc/localtime /etc/localtime.bak
-ln ­-s /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+ln -s /usr/share/zoneinfo/Europe/Moscow /etc/localtime
+cp -f $dir_config/ntp.conf /etc/
 enableService ntpd
 startService  ntpd
 
 DATETIME=`date +%Y%m%d_%H%M%S`
-
-echo "Инициализация и настройка домена $DOMAIN..."
+echo "Подготовка среды ОС..."
 #for service in smb nmb slapd named; do chkconfig $service off; service $service stop;
 rm -rf /etc/samba/smb.conf
 rm -rf /var/lib/samba/private/*
 rm -rf /etc/krb5.conf
-samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN ­--host­-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes ­--use­-ntvfs
+rm -rf /usr/local/bin/*
+kdestroy
+
+echo "Инициализация и настройка домена $DOMAIN..."
+samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN --host-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes
 rndc-confgen -a -r /dev/urandom
 
 cat <<EOF > /var/named/forwarders.conf
@@ -74,8 +101,8 @@ options {
         dump-file       "/var/named/data/cache_dump.db";
         statistics-file "/var/named/data/named_stats.txt";
         memstatistics-file "/var/named/data/named_mem_stats.txt";
-        allow-query     { localnets; $SUBNET/$PREFIX };
-	allow-update     { localnets; $SUBNET/$PREFIX };
+        allow-query     { localnets; $SUBNET/$PREFIX; };
+	allow-update     { localnets; $SUBNET/$PREFIX; };
         recursion yes;
 
         dnssec-enable no;
@@ -91,7 +118,8 @@ options {
         managed-keys-directory "/var/named/dynamic";
 
         tkey-gssapi-keytab "/var/lib/samba/private/dns.keytab";
-	tkey­-domain "$DOMAIN"
+	allow-transfer { "none"; };
+	tkey-domain "$DOMAIN";
 
         include "forwarders.conf";
 
@@ -116,13 +144,6 @@ include "/etc/rndc.key";
 
 EOF
 
-echo "Настройка DNS на домен контроллере /etc/resolv.conf"
-cat <<EOF > /etc/resolv.conf
-domain $DOMAIN
-search $DOMAIN
-nameserver $DNS1
-EOF
-
 #mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
 cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
 chgrp named /etc/krb5.conf
@@ -144,9 +165,8 @@ chmod g+rx /var/lib/samba/ntp_signd/
 systemctl stop ntpd
 systemctl start ntpd
 
-#rm -rf /etc/selinux/targeted/semanage.*.LOCK
-setsebool -P samba_domain_controller on
-chcon -t named_conf_t /var/lib/samba/private/dns.keytab
+rm -rf /etc/selinux/targeted/semanage.*.LOCK
+chcon -t named_conf_t /var/lib/samba/private/dns.keytab	
 semanage fcontext -a -t named_conf_t /var/lib/samba/private/dns.keytab
 chcon -t named_conf_t /var/lib/samba/private/named.conf
 semanage fcontext -a -t named_conf_t /var/lib/samba/private/named.conf
@@ -186,7 +206,6 @@ firewall-cmd --add-port=1024-5000/tcp --permanent;
 firewall-cmd --add-port=3268-3269/tcp --permanent
 firewall-cmd --reload
 
-
 echo "Запуск службы DNS..."
 enableService named
 startService named
@@ -221,7 +240,7 @@ cat <<EOF > /etc/init.d/samba4
 
 prog=samba
 prog_args="-d2 -l /var/log/ -D"
-prog_dir=/usr/sbin/
+prog_dir=/usr/sbin
 lockfile=/var/lock/subsys/\$prog
 
 
@@ -278,10 +297,11 @@ EOF
 chmod 555 /etc/init.d/samba4
 
 echo "Запуск службы SAMBA Active Directory Domain Controller..."
-mv /etc/samba/smb.conf /etc/named.conf.$DATETIME
-cp -f $dir_config/smb.conf /etc/samba/
+#mv /etc/samba/smb.conf /etc/named.conf.$DATETIME
+#cp -f $dir_config/smb_conf/smb-global.conf /etc/samba/smb.conf
+touch /etc/samba/smbpasswd
 enableService samba4
-startService samba4
+#startService samba4
 
 # Run samba like this to test
 #/usr/sbin/samba -i -M single -d2
@@ -290,46 +310,46 @@ startService samba4
 #named -u named -4 -f -g -d2
 
 echo "Настройка правил пароля для доменных пользователей..."
-samba-tool domain passwordsettings set --complexity=off
-samba-tool domain passwordsettings set --history-length=0
-samba-tool domain passwordsettings set --min-pwd-age=0
-samba-tool domain passwordsettings set --max-pwd-age=0
-samba-tool domain passwordsettings set --min-pwd-length=6
+#echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+samba-tool domain passwordsettings set --complexity=off --history-length=0 --min-pwd-age=0 --max-pwd-age=0 --min-pwd-length=6
 
 echo "Создание и настройка служебного пользователя домена dhcpd..."
 samba-tool user create dhcpd --description="Unprivileged user for DNS updates via DHCP server" --random-password
 samba-tool user setexpiry dhcpd --noexpiry
 samba-tool group addmembers DnsAdmins dhcpd
 samba-tool group addmembers DnsUpdateProxy dhcpd
+install -vdm 755 /etc/dhcp
 samba-tool domain exportkeytab --principal=dhcpd@$REALM /etc/dhcp/dhcpd.keytab
 chown dhcpd.dhcpd /etc/dhcp/dhcpd.keytab
-
 cp -f $dir_config/dhcpd.conf /etc/dhcp/
 
 #cp -f $dir_config/dhcpd-update-samba-dns.conf /etc/dhcp/
 #cp -f $dir_config/dhcpd-update-samba-dns.sh /usr/local/bin/
 #cp -f $dir_config/samba-dnsupdate.sh /usr/local/bin/
 
-cp -f $dir_config/dhcpd-update.sh /usr/local/bin/
-cp -f $dir_config/ntp.conf /etc/
-chown dhcpd.dhcpd /usr/local/bin/*.sh
-chmod +x /usr/local/bin/dhcpd-update.sh
+cp -f $dir_config/dhcpd-update.sh /etc/dhcp/scripts/
+chmod u+x /etc/dhcp/scripts/dhcpd-update.sh
 chown -R dhcpd.dhcpd /etc/dhcp
 
-systemctl enable dhcpd
+systemctl stop samba4
+systemctl enable dhcpd 
 systemctl start dhcpd
 systemctl enable ntpd
 systemctl start ntpd
+systemctl restart named
+systemctl start samba4
 
 echo "Создание обратной зоны DNS..."
-echo "$ADMINPASSWORD | kinit Administrator
-samba-­tool dns zonecreate $HOSTNAME 1.168.192.in­-addr.arpa
-samba­-tool dns add 1.168.192.in­-addr.arpa 2 PTR $HOSTNAME
-samba_dnsupdate --verbose --all-names
+echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+samba-tool dns zonelist $(hostname) --username=$Administrator --password="$ADMINPASSWORD"
+samba-tool dns zonecreate $(hostname) 1.168.192.in-addr.arpa --username=$Administrator --password="$ADMINPASSWORD"
+samba-tool dns add 1.168.192.in-addr.arpa 2 PTR $(hostname)
+samba_dnsupdate --all-names --current-ip=$IP
 
 echo "Создание тестовых пользователей user1 и user2..."
-samba-tool user create user1 Passw0rd --must-change-at-next-login --surname=Sidorov --given-name=sidorov --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
-samba-tool user create user2 Passw0rd --must-change-at-next-login --surname=Petrov --given-name=petrov  --mail-address='user2@tver.trs' --uid=user2 --uid-number=10001 --gid-number=10000 --login-shell=/bin/bash
+
+samba-tool user create user1 Passw0rd --must-change-at-next-login --given-name=Tester1 --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
+samba-tool user create user2 Passw0rd --must-change-at-next-login --given-name=Tester2  --mail-address='user2@tver.trs' --uid=user2 --uid-number=10001 --gid-number=10000 --login-shell=/bin/bash
 
 echo "Конфигурирование утилиты администрирования контроллера домена - phpLdapAdmin"
 yum -y install phpldapadmin
@@ -346,4 +366,4 @@ samba-tool fsmo show
 #host -t SRV _kerberos._udp.$DOMAIN.
 #host -t SRV _ldap._tcp.$DOMAIN.
 #host -t A $HOSTNAME.
-
+echo "$ADMINPASSWORD" | kinit Administrator@$REALM

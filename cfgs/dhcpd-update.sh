@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# /etc/bin/dhcpd-update.sh
+# /etc/dhcp/scripts/dhcpd-update.sh
 
 # This script is for secure DDNS updates on Samba 4
 # Version: 0.8.8
