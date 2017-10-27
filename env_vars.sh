@@ -10,7 +10,7 @@ SUBNET=192.168.1.0
 GATEWAY=192.168.1.1
 PREFIX=24
 NETMASK=255.255.255.0
-HOSTNAME=pdc.tver.trs
+HOSTNAME=samdc.tver.trs
 
 # The name of the Active Directory domain
 DOMAIN=tver.trs

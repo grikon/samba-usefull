@@ -5,7 +5,13 @@ echo "Настройка операционной системы "ОСь"... "
 . ./functions.sh
 . ./env_vars.sh
 
-echo "$IP $(hostname)" >> /etc/hosts && \
+#echo "$IP $(hostname)" >> /etc/hosts && \
+cp /etc/hosts /etc/hosts.bak
+cat <<EOF > /etc/hosts
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+$IP $(hostname) $(hostname -s)
+EOF
 
 echo "Конфигурирование репозитория os-rt-base"
 chmod -R 755 /var/www/html/os-rt-base
@@ -21,9 +27,9 @@ EOF
 systemctl enable httpd
 systemctl start httpd
 
-cat <<EOF > /etc/yum.repos.d/os-rt.repo
+cat <<EOF > /etc/yum.repos.d/os-rt-base.repo
 [os-rt-base]
-name=Operating system OS-RT 2.0 - Base
+name=Operating system OS-RT 2.1 - Base
 #baseurl=http://betapkgs.os-rt.ru/os-rt/$releasever/os/$basearch/
 baseurl=http://$IP/repos
 metadata_expire=14d
@@ -72,26 +78,26 @@ echo "Подготовка среды ОС..."
 rm -rf /etc/samba/smb.conf
 rm -rf /var/lib/samba/private/*
 rm -rf /etc/krb5.conf
-rm -rf /usr/local/bin/*
+#rm -rf /usr/local/bin/*
 kdestroy
 
 echo "Инициализация и настройка домена $DOMAIN..."
-samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN --host-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes
+samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN --host-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes 
 rndc-confgen -a -r /dev/urandom
 
 cat <<EOF > /var/named/forwarders.conf
 forwarders { 8.8.8.8; 8.8.4.4; } ;
 EOF
 
-IP=`hostname -I`
-echo $IP | grep -q " "
-if [[ $? != 1 ]]
-then
-    echo "Multiple interfaces on this host.  Set IP manually"
-    exit 1
-fi
+#IP=`hostname -I`
+#echo $IP | grep -q " "
+#if [[ $? != 1 ]]
+#then
+#    echo "Multiple interfaces on this host.  Set IP manually"
+#    exit 1
+#fi
 
-cp -p /etc/named.conf /etc/named.conf.$DATETIME
+#cp -p /etc/named.conf /etc/named.conf.$DATETIME
 cat <<EOF > /etc/named.conf
 options {
         listen-on port 53 { 127.0.0.1; $IP; };
@@ -145,10 +151,10 @@ include "/etc/rndc.key";
 EOF
 
 #mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
-cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+cp /var/lib/samba/private/krb5.conf /etc/
 chgrp named /etc/krb5.conf
 
-cp -p /etc/sysconfig/named /etc/sysconfig/named.$DATETIME
+#cp -p /etc/sysconfig/named /etc/sysconfig/named.$DATETIME
 echo OPTIONS="-4" >> /etc/sysconfig/named
 
 echo "Настройка прав доступа и контекстов безопасности для домена" 
@@ -159,11 +165,11 @@ chown named:named /etc/rndc.key
 chown named:named /var/lib/samba/private/named.conf
 chown root:named /var/lib/samba/private/
 chmod 775 /var/lib/samba/private/
+
+systemctl restart ntpd
+
 chgrp ntp /var/lib/samba/ntp_signd/
 chmod g+rx /var/lib/samba/ntp_signd/
-
-systemctl stop ntpd
-systemctl start ntpd
 
 rm -rf /etc/selinux/targeted/semanage.*.LOCK
 chcon -t named_conf_t /var/lib/samba/private/dns.keytab	
@@ -297,9 +303,20 @@ EOF
 chmod 555 /etc/init.d/samba4
 
 echo "Запуск службы SAMBA Active Directory Domain Controller..."
-#mv /etc/samba/smb.conf /etc/named.conf.$DATETIME
-#cp -f $dir_config/smb_conf/smb-global.conf /etc/samba/smb.conf
+#mv /etc/samba/smb.conf /etc/smb.conf.$DATETIME
+cp -f $dir_config/smb.conf /etc/samba/
+
 touch /etc/samba/smbpasswd
+touch /etc/samba/username.map
+cat <<EOF > /etc/samba/username.map
+!root = $SHORTDOMAIN\Administrator
+#root = administrator
+EOF
+
+smbpasswd -a root
+
+smbpasswd -e root
+
 enableService samba4
 #startService samba4
 
@@ -310,7 +327,7 @@ enableService samba4
 #named -u named -4 -f -g -d2
 
 echo "Настройка правил пароля для доменных пользователей..."
-#echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+echo "$ADMINPASSWORD" | kinit Administrator@$REALM
 samba-tool domain passwordsettings set --complexity=off --history-length=0 --min-pwd-age=0 --max-pwd-age=0 --min-pwd-length=6
 
 echo "Создание и настройка служебного пользователя домена dhcpd..."
@@ -321,6 +338,7 @@ samba-tool group addmembers DnsUpdateProxy dhcpd
 install -vdm 755 /etc/dhcp
 samba-tool domain exportkeytab --principal=dhcpd@$REALM /etc/dhcp/dhcpd.keytab
 chown dhcpd.dhcpd /etc/dhcp/dhcpd.keytab
+smbpasswd -e dhcpd
 cp -f $dir_config/dhcpd.conf /etc/dhcp/
 
 #cp -f $dir_config/dhcpd-update-samba-dns.conf /etc/dhcp/
@@ -335,12 +353,12 @@ systemctl stop samba4
 systemctl enable dhcpd 
 systemctl start dhcpd
 systemctl enable ntpd
-systemctl start ntpd
 systemctl restart named
 systemctl start samba4
 
 echo "Создание обратной зоны DNS..."
-echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+#echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+klist
 samba-tool dns zonelist $(hostname) --username=$Administrator --password="$ADMINPASSWORD"
 samba-tool dns zonecreate $(hostname) 1.168.192.in-addr.arpa --username=$Administrator --password="$ADMINPASSWORD"
 samba-tool dns add 1.168.192.in-addr.arpa 2 PTR $(hostname)
@@ -351,19 +369,22 @@ echo "Создание тестовых пользователей user1 и user
 samba-tool user create user1 Passw0rd --must-change-at-next-login --given-name=Tester1 --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
 samba-tool user create user2 Passw0rd --must-change-at-next-login --given-name=Tester2  --mail-address='user2@tver.trs' --uid=user2 --uid-number=10001 --gid-number=10000 --login-shell=/bin/bash
 
-echo "Конфигурирование утилиты администрирования контроллера домена - phpLdapAdmin"
+echo "Конфигурирование утилиты веб-администрирования - phpLdapAdmin"
 yum -y install phpldapadmin
 cp -f $dir_config/phpldapadmin/config.php /etc/phpldapadmin/
 cp -f $dir_config/phpldapadmin/phpldapadmin.conf /etc/httpd/conf.d/
 systemctl restart httpd.service
 
-echo "Now manually set the group id and NIS domain using dsa.msc"
+#echo "Now manually set the group id and NIS domain using dsa.msc"
 # Change passwords like this (on domain controller box)
 #samba-tool user setpassword user1
-samba-tool fsmo show
+#samba-tool fsmo show
 
-#echo "Проверка имени хостов и динамического обновления зоны DNS"
-#host -t SRV _kerberos._udp.$DOMAIN.
-#host -t SRV _ldap._tcp.$DOMAIN.
-#host -t A $HOSTNAME.
-echo "$ADMINPASSWORD" | kinit Administrator@$REALM
+echo "Проверка имени хостов и динамического обновления зоны DNS"
+klist
+host -t SRV _kerberos._udp.$DOMAIN.
+host -t SRV _ldap._tcp.$DOMAIN.
+host -t A $(hostname).
+
+echo "$ADMINPASSWORD" | smbclient //localhost/netlogon -UAdministrator -c 'ls'
+#echo "$ADMINPASSWORD" | kinit Administrator@$REALM
