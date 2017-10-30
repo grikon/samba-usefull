@@ -75,9 +75,13 @@ startService  ntpd
 DATETIME=`date +%Y%m%d_%H%M%S`
 echo "Подготовка среды ОС..."
 #for service in smb nmb slapd named; do chkconfig $service off; service $service stop;
-rm -rf /etc/samba/smb.conf
-rm -rf /var/lib/samba/private/*
-rm -rf /etc/krb5.conf
+mv /etc/samba/smb.conf /etc/smb.conf.$DATETIME
+rm -rf /var/lib/samba
+#rm -rf /etc/krb5.conf
+
+cat <<EOF > /etc/krb5.conf
+#includedir /etc/krb5.conf.d/
+EOF
 #rm -rf /usr/local/bin/*
 kdestroy
 
@@ -150,7 +154,7 @@ include "/etc/rndc.key";
 
 EOF
 
-#mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
+mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
 cp /var/lib/samba/private/krb5.conf /etc/
 chgrp named /etc/krb5.conf
 
@@ -302,21 +306,15 @@ EOF
 
 chmod 555 /etc/init.d/samba4
 
-echo "Запуск службы SAMBA Active Directory Domain Controller..."
-#mv /etc/samba/smb.conf /etc/smb.conf.$DATETIME
+echo "Запуск и настройка службы SAMBA Active Directory Domain Controller..."
 cp -f $dir_config/smb.conf /etc/samba/
 
-touch /etc/samba/smbpasswd
-touch /etc/samba/username.map
+#touch /etc/samba/smbpasswd
 cat <<EOF > /etc/samba/username.map
-!root = $SHORTDOMAIN\Administrator
-#root = administrator
+!root = $SHORTDOMAIN\$Administrator
 EOF
-
 smbpasswd -a root
-
 smbpasswd -e root
-
 enableService samba4
 #startService samba4
 
@@ -353,7 +351,7 @@ systemctl stop samba4
 systemctl enable dhcpd 
 systemctl start dhcpd
 systemctl enable ntpd
-systemctl restart named
+systemctl stop named
 systemctl start samba4
 
 echo "Создание обратной зоны DNS..."
@@ -379,6 +377,7 @@ systemctl restart httpd.service
 # Change passwords like this (on domain controller box)
 #samba-tool user setpassword user1
 #samba-tool fsmo show
+
 
 echo "Проверка имени хостов и динамического обновления зоны DNS"
 klist
