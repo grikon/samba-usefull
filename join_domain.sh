@@ -3,33 +3,33 @@
 . ./env_vars.sh
 . ./functions.sh
 
-if [[ `tty` != "/dev/tty1" ]]
-then
-    echo "Данный скрипт выполняется на клиенте в терминале"
-    exit 1
-fi
+#if [[ `tty` != "/dev/tty1" ]]
+#then
+#    echo "Данный скрипт выполняется на клиенте в терминале"
+#    exit 1
+#fi
 
-if [[ `hostname` = "localhost.localdomain" ]]
-then
-    echo Must set hostname in /etc/hostname
-    exit 1
-fi
+#if [[ `hostname` = "localhost.localdomain" ]]
+#then
+#    echo Must set hostname in /etc/hostname
+#    exit 1
+#fi
 
 IP=`hostname -I`
-echo $IP | grep -q " "
-if [[ $? != 1 ]]
-then
-    echo "Multiple interfaces on this host.  Set IP manually"
-    exit 1
-fi
+#echo $IP | grep -q " "
+#if [[ $? != 1 ]]
+#then
+#    echo "Multiple interfaces on this host.  Set IP manually"
+#    exit 1
+#fi
 
-if [[ "$IP" = "$DNS1" ]]
-then
-    echo "Joining the DC to itself breaks things."
-    echo "Export the keytab by hand using instructions in https://wiki.samba.org/index.php/Local_user_management_and_authentication/sssd"
-    echo "Which is in the script domain_controller_local_authentication.sh"
-    exit 1
-fi
+#if [[ "$IP" = "$DNS1" ]]
+#then
+#    echo "Joining the DC to itself breaks things."
+#    echo "Export the keytab by hand using instructions in https://wiki.samba.org/index.php/Local_user_management_and_authentication/sssd"
+#    echo "Which is in the script domain_controller_local_authentication.sh"
+#    exit 1
+#fi
 
 DATETIME=`date +%Y%m%d_%H%M%S`
 

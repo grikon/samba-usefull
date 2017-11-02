@@ -5,7 +5,6 @@ echo "Настройка операционной системы "ОСь"... "
 . ./functions.sh
 . ./env_vars.sh
 
-#echo "$IP $(hostname)" >> /etc/hosts && \
 cp /etc/hosts /etc/hosts.bak
 cat <<EOF > /etc/hosts
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
@@ -154,9 +153,10 @@ include "/etc/rndc.key";
 
 EOF
 
-mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
-cp /var/lib/samba/private/krb5.conf /etc/
-chgrp named /etc/krb5.conf
+#mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
+cp /var/lib/samba/private/krb5.conf /etc/krb5.conf.d/
+#cat /var/lib/samba/private/krb5.conf > /etc/krb5.conf
+chgrp named /etc/krb5.conf.d/*
 
 #cp -p /etc/sysconfig/named /etc/sysconfig/named.$DATETIME
 echo OPTIONS="-4" >> /etc/sysconfig/named
@@ -307,14 +307,13 @@ EOF
 chmod 555 /etc/init.d/samba4
 
 echo "Запуск и настройка службы SAMBA Active Directory Domain Controller..."
-cp -f $dir_config/smb.conf /etc/samba/
+#cp -f $dir_config/smb.conf /etc/samba/
+#smbcontrol all reload-config
 
 #touch /etc/samba/smbpasswd
 cat <<EOF > /etc/samba/username.map
-!root = $SHORTDOMAIN\$Administrator
+!root = $SHORTDOMAIN\Administrator
 EOF
-smbpasswd -a root
-smbpasswd -e root
 enableService samba4
 #startService samba4
 
@@ -327,6 +326,8 @@ enableService samba4
 echo "Настройка правил пароля для доменных пользователей..."
 echo "$ADMINPASSWORD" | kinit Administrator@$REALM
 samba-tool domain passwordsettings set --complexity=off --history-length=0 --min-pwd-age=0 --max-pwd-age=0 --min-pwd-length=6
+smbpasswd -a root
+smbpasswd -e root
 
 echo "Создание и настройка служебного пользователя домена dhcpd..."
 samba-tool user create dhcpd --description="Unprivileged user for DNS updates via DHCP server" --random-password
@@ -351,19 +352,18 @@ systemctl stop samba4
 systemctl enable dhcpd 
 systemctl start dhcpd
 systemctl enable ntpd
-systemctl stop named
+systemctl restart named
 systemctl start samba4
 
 echo "Создание обратной зоны DNS..."
 #echo "$ADMINPASSWORD" | kinit Administrator@$REALM
-klist
+#klist
 samba-tool dns zonelist $(hostname) --username=$Administrator --password="$ADMINPASSWORD"
 samba-tool dns zonecreate $(hostname) 1.168.192.in-addr.arpa --username=$Administrator --password="$ADMINPASSWORD"
 samba-tool dns add 1.168.192.in-addr.arpa 2 PTR $(hostname)
 samba_dnsupdate --all-names --current-ip=$IP
 
 echo "Создание тестовых пользователей user1 и user2..."
-
 samba-tool user create user1 Passw0rd --must-change-at-next-login --given-name=Tester1 --mail-address='user1@tver.trs' --uid=user1 --uid-number=10000 --gid-number=10000 --login-shell=/bin/bash
 samba-tool user create user2 Passw0rd --must-change-at-next-login --given-name=Tester2  --mail-address='user2@tver.trs' --uid=user2 --uid-number=10001 --gid-number=10000 --login-shell=/bin/bash
 
@@ -372,6 +372,10 @@ yum -y install phpldapadmin
 cp -f $dir_config/phpldapadmin/config.php /etc/phpldapadmin/
 cp -f $dir_config/phpldapadmin/phpldapadmin.conf /etc/httpd/conf.d/
 systemctl restart httpd.service
+systemctl restart named
+systemctl restart dhcpd
+systemctl stop samba4
+systemctl start samba4
 
 #echo "Now manually set the group id and NIS domain using dsa.msc"
 # Change passwords like this (on domain controller box)
