@@ -1,18 +1,18 @@
 #!/bin/bash
 
-# configure
-echo "Настройка операционной системы "ОСь"... "
+echo "Настройка операционной системы "ОСь"..."
 . ./functions.sh
 . ./env_vars.sh
-
-cp /etc/hosts /etc/hosts.bak
+mv /etc/hosts /etc/hosts.$DATETIME
 cat <<EOF > /etc/hosts
 127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
-::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
-$IP $(hostname) $(hostname -s)
+$IP $(hostname) $(hostname -A)
 EOF
 
-echo "Конфигурирование репозитория os-rt-base"
+echo "Загрузка пакетов "ОСи" и создание,настройка репозитория os-rt-base для домена"
+cd /var/www/html | reposync http://betapkgs.os-rt.ru/os-rt/2.1/os/x86_64/
+cd /var/www/html/os-rt-base | rpm -i deltarpm* python-deltarpm* createrepo* 
+createrepo /var/www/html/os-rt-base
 chmod -R 755 /var/www/html/os-rt-base
 
 cat <<EOF > /etc/httpd/conf.d/repos.conf
@@ -37,6 +37,7 @@ skip_if_unavailable=True
 EOF
 
 restorecon -vR /var/www/html
+
 yum clean all
 yum repolist
 
@@ -48,7 +49,7 @@ nameserver $DNS1
 nameserver 8.8.8.8
 EOF
 
-echo "Установка необходимого ПО"
+echo "Установка необходимого ПО ...."
 yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
    readline-devel python-devel gdb pkgconfig krb5-workstation \
    zlib-devel setroubleshoot-server libaio-devel \
@@ -61,46 +62,47 @@ yum -y install gcc libacl-devel libblkid-devel gnutls-devel \
    perl-Parse-Yapp xfsprogs-devel NetworkManager \
    samba samba-client samba-dc samba-krb5-printing \
    samba-test tdb-tools krb5-workstation samba-winbind-clients \
-   openldap-clients bind bind-utils python-dns nmap-ncat dhcp
+   openldap-clients bind bind-utils python-dns nmap-ncat dhcp ntp ntpdate
 
-echo "Установка точного времени, настройка локального NTP-сервера"
-yum install -y ntpdate ntp
-mv /etc/localtime /etc/localtime.bak
+echo "Настройка часового пояса,точного времени,настройка локального NTPd-сервера"
+mv /etc/localtime /etc/localtime.$DATETIME
 ln -s /usr/share/zoneinfo/Europe/Moscow /etc/localtime
-cp -f $dir_config/ntp.conf /etc/
+
+cat <<EOF > /etc/ntp.conf
+server 127.127.1.0
+fudge 127.127.1.0 stratum 13
+driftfile /var/lib/ntp/ntp.drift
+logfile /var/log/ntp
+ntpsigndsocket /var/lib/samba/ntp_signd/
+restrict default kod nomodify notrap nopeer mssntp
+restrict 127.0.0.1
+EOF
+
 enableService ntpd
 startService  ntpd
 
-DATETIME=`date +%Y%m%d_%H%M%S`
-echo "Подготовка среды ОС..."
-#for service in smb nmb slapd named; do chkconfig $service off; service $service stop;
+echo "Подготовка окружения в "ОСи""
 mv /etc/samba/smb.conf /etc/smb.conf.$DATETIME
 rm -rf /var/lib/samba
-#rm -rf /etc/krb5.conf
+
+kdestroy
 
 cat <<EOF > /etc/krb5.conf
 #includedir /etc/krb5.conf.d/
 EOF
-#rm -rf /usr/local/bin/*
-kdestroy
 
 echo "Инициализация и настройка домена $DOMAIN..."
-samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$DOMAIN --domain=$SHORTDOMAIN --host-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes 
+samba-tool domain provision --use-rfc2307 --dns-backend=BIND9_DLZ --realm=$REALM --domain=$SHORTDOMAIN --host-ip=$IP --adminpass=$ADMINPASSWORD --server-role=dc --use-xattrs=yes
+
 rndc-confgen -a -r /dev/urandom
 
 cat <<EOF > /var/named/forwarders.conf
 forwarders { 8.8.8.8; 8.8.4.4; } ;
 EOF
 
-#IP=`hostname -I`
-#echo $IP | grep -q " "
-#if [[ $? != 1 ]]
-#then
-#    echo "Multiple interfaces on this host.  Set IP manually"
-#    exit 1
-#fi
+echo "Настройка конфигурации для DNS"
+cp -p /etc/named.conf /etc/named.conf.$DATETIME
 
-#cp -p /etc/named.conf /etc/named.conf.$DATETIME
 cat <<EOF > /etc/named.conf
 options {
         listen-on port 53 { 127.0.0.1; $IP; };
@@ -128,7 +130,7 @@ options {
 
         tkey-gssapi-keytab "/var/lib/samba/private/dns.keytab";
 	allow-transfer { "none"; };
-	tkey-domain "$DOMAIN";
+	tkey-domain "$(hostname -d)";
 
         include "forwarders.conf";
 
@@ -150,18 +152,16 @@ include "/etc/named.rfc1912.zones";
 include "/etc/named.root.key";
 include "/var/lib/samba/private/named.conf";
 include "/etc/rndc.key";
-
 EOF
 
-#mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
-cp /var/lib/samba/private/krb5.conf /etc/krb5.conf.d/
-#cat /var/lib/samba/private/krb5.conf > /etc/krb5.conf
-chgrp named /etc/krb5.conf.d/*
+mv /etc/krb5.conf /etc/krb5.conf.$DATETIME
+cp /var/lib/samba/private/krb5.conf /etc/
+chgrp named /etc/krb5.conf
 
 #cp -p /etc/sysconfig/named /etc/sysconfig/named.$DATETIME
 echo OPTIONS="-4" >> /etc/sysconfig/named
 
-echo "Настройка прав доступа и контекстов безопасности для домена" 
+echo "Настройка прав доступа на каталог SAMBA"
 chown -R named:named /var/lib/samba/private/dns
 chown -R named:named /var/lib/samba/private/sam.ldb.d
 chown named:named /var/lib/samba/private/dns.keytab
@@ -170,13 +170,13 @@ chown named:named /var/lib/samba/private/named.conf
 chown root:named /var/lib/samba/private/
 chmod 775 /var/lib/samba/private/
 
+chgrp ntp /var/lib/samba/ntp_signd/
+chmod g+rwx /var/lib/samba/ntp_signd/
 systemctl restart ntpd
 
-chgrp ntp /var/lib/samba/ntp_signd/
-chmod g+rx /var/lib/samba/ntp_signd/
-
+echo "Настройка контекстов безопасности SELinux на каталог SAMBA"
 rm -rf /etc/selinux/targeted/semanage.*.LOCK
-chcon -t named_conf_t /var/lib/samba/private/dns.keytab	
+chcon -t named_conf_t /var/lib/samba/private/dns.keytab
 semanage fcontext -a -t named_conf_t /var/lib/samba/private/dns.keytab
 chcon -t named_conf_t /var/lib/samba/private/named.conf
 semanage fcontext -a -t named_conf_t /var/lib/samba/private/named.conf
@@ -196,6 +196,8 @@ do
     chcon -t named_var_run_t /var/lib/samba/private/sam.ldb.d/$file
     semanage fcontext -a -t named_var_run_t /var/lib/samba/private/sam.ldb.d/$file
 done
+
+setsebool -P samba_domain_controller on
 restorecon -vR /var/lib/samba/
 
 echo "Настройка правил межсетевого экрана Firewalld..."
@@ -311,9 +313,6 @@ echo "Запуск и настройка службы SAMBA Active Directory Dom
 #smbcontrol all reload-config
 
 #touch /etc/samba/smbpasswd
-cat <<EOF > /etc/samba/username.map
-!root = $SHORTDOMAIN\Administrator
-EOF
 enableService samba4
 #startService samba4
 
@@ -349,7 +348,7 @@ chmod u+x /etc/dhcp/scripts/dhcpd-update.sh
 chown -R dhcpd.dhcpd /etc/dhcp
 
 systemctl stop samba4
-systemctl enable dhcpd 
+systemctl enable dhcpd
 systemctl start dhcpd
 systemctl enable ntpd
 systemctl restart named
@@ -359,8 +358,9 @@ echo "Создание обратной зоны DNS..."
 #echo "$ADMINPASSWORD" | kinit Administrator@$REALM
 #klist
 samba-tool dns zonelist $(hostname) --username=$Administrator --password="$ADMINPASSWORD"
-samba-tool dns zonecreate $(hostname) 1.168.192.in-addr.arpa --username=$Administrator --password="$ADMINPASSWORD"
+samba-tool dns zonecreate $(hostname -A) 1.168.192.in-addr.arpa --username=$Administrator --password="$ADMINPASSWORD"
 samba-tool dns add 1.168.192.in-addr.arpa 2 PTR $(hostname)
+systemctl restart named
 samba_dnsupdate --all-names --current-ip=$IP
 
 echo "Создание тестовых пользователей user1 и user2..."
@@ -385,8 +385,8 @@ systemctl start samba4
 
 echo "Проверка имени хостов и динамического обновления зоны DNS"
 klist
-host -t SRV _kerberos._udp.$DOMAIN.
-host -t SRV _ldap._tcp.$DOMAIN.
+host -t SRV _kerberos._udp.$(hostname -d).
+host -t SRV _ldap._tcp.$(hostname -d).
 host -t A $(hostname).
 
 echo "$ADMINPASSWORD" | smbclient //localhost/netlogon -UAdministrator -c 'ls'
